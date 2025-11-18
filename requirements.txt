@@ -1,0 +1,24 @@
+llama-index==0.11.17
+llama-index-core
+llama-index-readers-file
+llama-index-llms-ollama
+llama-index-embeddings-ollama
+llama-index-llms-openai
+llama-index-embeddings-openai
+
+fastapi
+uvicorn
+
+pypdf
+python-docx
+docx2txt
+pandas
+pdfminer.six
+openpyxl
+
+python-dotenv
+
+tqdm
+requests
+
+torch transformers python-pptx Pillow
