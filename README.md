@@ -70,15 +70,17 @@ OPENAI_LLM_MODEL=gpt-4o
 
 ## 📦 必要ライブラリ (requirements.txt)
 ```requirements.txt
-fastapi
-uvicorn
-python-dotenv
-llama-index>=0.8.20
-ollama>=0.1.12
-httpx
-pydantic
+streamlit>=1.18.0
+llama-index==0.9.44
+ollama>=0.1.0
+transformers>=4.30.0
+sentence-transformers>=2.2.2
+pdfminer.six
+python-docx
 docx2txt
-PyPDF2
+openpyxl
+chardet
+tqdm
   ```
 
 注意: 最新の llama_index と ollama を推奨。OpenAI呼び出しも可能。
@@ -98,9 +100,7 @@ uvicorn main:app --reload
 ### APIエンドポイント:
 
 POST /index/build - フォルダ指定でIndex作成
-
 POST /index/query - 作成済Indexに問い合わせ
-
 GET /health - ヘルスチェック
 
 ## 📝 API使用例
@@ -127,78 +127,44 @@ POST /index/query
 1. Embedding / LLM のプロバイダ不一致
 
 作成時とQuery時でプロバイダが異なるとエラー
-
 Index embedding <class 'llama_index.embeddings.openai.base.OpenAIEmbedding'> does not match requested provider ollama.
-
-
 対策: インデックス作成とQueryで同じプロバイダを使用。必要に応じて古いIndexを削除。
 
 2. Ollama LLM タイムアウト
 
 大きなモデルではQuery時にタイムアウト発生
-
 httpcore.ReadTimeout: timed out
-
-
 対策: request_timeout=180 など長めに設定。軽量モデルでIndex作成。
 
 3. Index作成時の古い残骸
-
 Indexフォルダに古いファイルが残っている場合、Embeddingが変わるとエラー
-
 対策: shutil.rmtree(index_path) で削除してから作成
 
 4. ファイル読み込みのエラー
-
 .txt: OK
-
 .pdf: PyPDFがサポートしない場合あり
-
 ERROR:pypdf._cmap:Advanced encoding /90ms-RKSJ-V not implemented yet
-
-
 .docx: docx2txt 必須
-
 pip install docx2txt
-
 
 読み込めないファイルは skipped_files に記録
 
 5. OpenAI API Key 認証エラー
-
 .env に正しいキーを設定しないと認証エラー
-
 Incorrect API key provided
 
-
 対策: .env に OPENAI_API_KEY を設定。Gitに入れない。
-
 6. Index JSON / SQLite
-
 Indexはローカル保存（JSON / StorageContext）でOK
-
 SQLite必須ではない
-
 _embed_model でEmbedding情報確認可能
 
 7. モデルサイズとローカル実行
 
 Index作成は小さいモデルで十分（例：llama3.2:3b）
-
 Query時に大きいモデルで精度向上可能
-
 8. その他Tips
 
 .env と storage/ はGit管理しない
-
 複数フォルダ対応は safe_load_documents_from_folder の拡張で対応可能
-
 Query精度向上にはドメイン別Index、Embedモデル・LLMモデルの選択を適切に
-
-## 🔄 今後のステップ
-
-UI改善（複数フォルダ対応、読み込めなかったファイルの可視化）
-
-RAG精度検証（ベクトルDB・LLM組み合わせ最適化）
-
-他PCで動作可能なパッケージ化（Docker / PyPI形式など）
