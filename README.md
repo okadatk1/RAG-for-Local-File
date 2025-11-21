@@ -1,5 +1,5 @@
 # RAG-for-Local-File
-# RAG Index API (Ollama / OpenAI)
+# RAG Index API (Hugging face)
 
 ローカルでRAG（Retrieval-Augmented Generation）を構築し、LLMに問い合わせるAPI。  
 ファイルをネットワークに送信せずにローカルでIndex作成が可能。  
@@ -10,9 +10,9 @@
 
 - **Index作成**: 指定フォルダのテキストファイル・PDF・DOCXをVectorStoreIndex化
 - **Query**: 作成したIndexを使ってLLMに質問
-- **Embedding**: Ollama / OpenAI選択可
-- **LLM**: Ollama / OpenAI選択可
-- **FastAPI**でREST API提供
+- **Embedding**: Huggingface Localでは小さいことが必須
+- **LLM**: Ollama
+- **Streamlit**でREST API提供
 
 ---- 完全ローカル運用（ファイルは外に出さない）を最優先。Embedding と LLM を Ollama に固定。
 - Index 作成は軽量で高速な embedding（`nomic-embed-text` 等）を使う。
@@ -20,21 +20,35 @@
 - `load_index_from_storage(..., embed_model=...)` を使ってロード時にも embedding を明示的に渡す。
 - Index のメタ（`meta.json`）を保存し、一貫性チェックに用いる。
 - `request_timeout` は初回ロード考慮で十分大きく（例: 180s）。
+
+### ■ インデックス化
+- 指定したフォルダーを再帰的に走査し全文を抽出 PDF, DOCX, XLSX, PPTX, CSV, TXT, MD, ZIP（解凍して再帰読み込み）
+- 進捗（ファイル読み込みフェーズ & インデックス生成フェーズ）を Streamlit 上で可視化
+- chunk_size / chunk_overlap 調整可能
+- HuggingFace 埋め込みモデル（ローカル）を使用
+- インデックスは自動的に削除して再構築
+- meta.json に埋め込みモデル情報を記録し、クエリ時にモデル不一致があればエラー
+### ■ 検索
+- 作成済みインデックス一覧を選択式で表示
+- Ollama のモデル一覧を GUI 上で選択
+- 選んだモデルで LLM 生成（LLM を使わず Retriever のみモードも可能に拡張可）
+- 完全ローカルで動作（外部送信なし）
+### ■ UI仕様（Streamlit）
+- 左: Embeddingモデルパス、Ollamaモデル、インデックス一覧
+- 「インデックス作成」タブ → フォルダー/インデックス名/パラメータ/キャンセルボタン
+- 「検索」タブ → LLMモデル + クエリ + 実行ボタン
+
 ## 2) 前提 & 環境
 - OS: WSL2 on Windows（他のLinuxでも同等）
 - Python 3.11+ 推奨
 
 ## 📁 ディレクトリ構成
 rag_project/
-
-├─ main.py # API本体
-
+├─ app.py # UI
+├─ rag_core.py # Index作成、検索本体
 ├─ requirements.txt # Python依存関係
-
 ├─ .env # 環境変数
-
 ├─ storage/ # 作成したIndexを格納
-
 └─ README.md
 
 
