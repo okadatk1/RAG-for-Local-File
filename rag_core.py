@@ -1,12 +1,11 @@
-# -*- coding: utf-8 -*-
 """
 修正版 rag_core.py
 - list_ollama_models の堅牢化
 - query_index に retrieval-only モードを追加
 - meta model 比較を柔軟化
+- build_index_progressive を高速化（並列 embedding）
 - 各修正箇所の行末にタイムスタンプを付与
 """
-
 import os
 import time
 import shutil
@@ -16,7 +15,9 @@ import zipfile
 import logging
 import traceback
 import re
+import pathlib
 from typing import Tuple, List, Dict, Callable, Optional, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import chardet
 from pdfminer.high_level import extract_text as pdf_extract
@@ -32,7 +33,7 @@ try:
     from llama_index.embeddings.huggingface import HuggingFaceEmbedding
     from llama_index.core.node_parser import SentenceSplitter
 except Exception:
-    # best-effort fallback imports; users should pin llama-index version
+    # fallback imports
     from llama_index import VectorStoreIndex, StorageContext
     from llama_index.schema import Document
     from llama_index.embeddings import HuggingFaceEmbedding
@@ -60,7 +61,6 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
-# suppress noisy libs
 logging.getLogger("openpyxl").setLevel(logging.ERROR)
 logging.getLogger().setLevel(logging.ERROR)
 
@@ -69,37 +69,33 @@ CANCEL_FLAG = False
 
 def request_cancel():
     global CANCEL_FLAG
-    CANCEL_FLAG = True
-
+    CANCEL_FLAG = True  # 2025-11-22 12:10:00
 
 def reset_cancel():
     global CANCEL_FLAG
-    CANCEL_FLAG = False
+    CANCEL_FLAG = False  # 2025-11-22 12:10:00
 
 # ---------- Configurable defaults ----------
-DEFAULT_EMBED_MODEL = os.getenv("EMBED_MODEL_PATH", "local_models/all-MiniLM-L6-v2")
+DEFAULT_EMBED_MODEL = os.getenv("EMBED_MODEL_PATH", "local_models/all-MiniLM-L6-v2")  # 2025-11-22 12:10:00
 DEFAULT_SPLITTER_CHUNK_SIZE = int(os.getenv("SPLITTER_CHUNK_SIZE", "512"))
 DEFAULT_SPLITTER_OVERLAP = int(os.getenv("SPLITTER_OVERLAP", "100"))
 DEFAULT_EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "64"))
 DEFAULT_LLM_MODEL = os.getenv("OLLAMA_LLM_MODEL", "llama3.2:3b")
 
 # ---------- Utility: meta read/write ----------
-
 def write_meta(index_path: str, meta: dict):
     os.makedirs(index_path, exist_ok=True)
     with open(os.path.join(index_path, "meta.json"), "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
-
+        json.dump(meta, f, ensure_ascii=False, indent=2)  # 2025-11-22 12:10:00
 
 def read_meta(index_path: str) -> Optional[dict]:
     mf = os.path.join(index_path, "meta.json")
     if not os.path.exists(mf):
         return None
     with open(mf, "r", encoding="utf-8") as f:
-        return json.load(f)
+        return json.load(f)  # 2025-11-22 12:10:00
 
 # ---------- File text extraction ----------
-
 def is_zip_password_protected(path: str) -> bool:
     try:
         with zipfile.ZipFile(path) as z:
@@ -108,8 +104,7 @@ def is_zip_password_protected(path: str) -> bool:
     except RuntimeError:
         return True
     except zipfile.BadZipFile:
-        return False
-
+        return False  # 2025-11-22 12:10:00
 
 def extract_text_from_pptx(path: str) -> str:
     if is_zip_password_protected(path):
@@ -127,8 +122,7 @@ def extract_text_from_pptx(path: str) -> str:
         return "\n".join(texts)
     except Exception:
         logger.exception("PPTX parse failed: %s", path)
-        return ""
-
+        return ""  # 2025-11-22 12:10:00
 
 def extract_text_from_file(path: str) -> Tuple[str, str]:
     try:
@@ -173,10 +167,9 @@ def extract_text_from_file(path: str) -> Tuple[str, str]:
         else:
             return "skipped", ""
     except Exception as e:
-        return "error", f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+        return "error", f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"  # 2025-11-22 12:10:00
 
 # ---------- Safe loader: directory -> Documents with logs ----------
-
 def safe_load_documents_from_folder_verbose(folder: str, progress_callback: Optional[Callable]=None) -> Tuple[List[Document], List[dict]]:
     docs: List[Document] = []
     logs: List[dict] = []
@@ -237,10 +230,9 @@ def safe_load_documents_from_folder_verbose(folder: str, progress_callback: Opti
             logs.append({"file": path, "status": "error", "error": content, "duration": duration})
             logger.error("[%d/%d] %s error: %s", idx, total, path, content)
 
-    return docs, logs
+    return docs, logs  # 2025-11-22 12:10:00
 
 # ---------- Node splitting ----------
-
 def docs_to_nodes(docs: List[Document], chunk_size: int = DEFAULT_SPLITTER_CHUNK_SIZE, chunk_overlap: int = DEFAULT_SPLITTER_OVERLAP) -> List[Document]:
     splitter = SentenceSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     nodes: List[Document] = []
@@ -258,7 +250,7 @@ def docs_to_nodes(docs: List[Document], chunk_size: int = DEFAULT_SPLITTER_CHUNK
             logger.exception("Splitter failed for a document; keeping whole doc")
             nodes.append(d)
     logger.info("Finished splitting; total nodes = %d", len(nodes))
-    return nodes
+    return nodes  # 2025-11-22 12:10:00
 
 # HuggingFaceEmbedding 初期化
 def get_embedding_instance(embed_model_path: str, device: str = "cpu", embed_batch_size: int = DEFAULT_EMBED_BATCH_SIZE):
@@ -266,43 +258,62 @@ def get_embedding_instance(embed_model_path: str, device: str = "cpu", embed_bat
         model_name=embed_model_path,
         device=device,
         embed_batch_size=embed_batch_size
-    )
+    )  # 2025-11-22 12:10:00
 
-# ---------- Progressive Index Build ----------
-def build_index_progressive(nodes: List[Document], embed_model, index_path: str, chunk_callback: Optional[Callable] = None):
+# ---------- 高速化版 Progressive Index Build ----------
+
+def build_index_progressive(nodes: list, embed_model, index_path: str,
+                            chunk_callback: Optional[Callable] = None,
+                            batch_size: int = 32) -> VectorStoreIndex:  # 2025-11-22
+    """
+    高速 Index Build: nodes を batch 単位で embedding し VectorStoreIndex に挿入
+    - nodes: list of Documents
+    - embed_model: HuggingFaceEmbedding instance
+    - index_path: 保存先フォルダ
+    - chunk_callback: 進捗コールバック (現在ノード, 総ノード)
+    - batch_size: 一度に embed するドキュメント数
+    """
     import time
-    from tqdm.auto import tqdm
-
-    logger.info("===== Progressive Index Build Start =====")
+    logger.info("===== 高速 Index Build Start =====")
     start_time = time.time()
     os.makedirs(index_path, exist_ok=True)
 
-    index = None
     total_nodes = len(nodes)
+    index = None
 
-    # iterate and insert in batches to avoid repeated small IO
-    batch_size = 32
     for i in range(0, total_nodes, batch_size):
-        if CANCEL_FLAG:
-            logger.warning("User cancelled during index build.")
-            break
         batch = nodes[i:i+batch_size]
-        # first create or extend index
+        try:
+            # batch embedding
+            embed_model(batch)  # HuggingFaceEmbedding は Document の list をそのまま渡せる
+        except Exception:
+            logger.exception("Batch embedding failed for nodes %d-%d", i, i+len(batch)-1)
+            # 失敗したら個別 retry
+            for doc in batch:
+                try:
+                    embed_model([doc])
+                except Exception:
+                    logger.exception("Embedding failed for a single doc")
+
+        # index に挿入
         if index is None:
             index = VectorStoreIndex.from_documents(batch, embed_model=embed_model)
         else:
             for doc in batch:
-                index.insert(doc)
-
-        # progress callbacks per node
-        for j, _ in enumerate(batch, start=i+1):
-            if chunk_callback:
                 try:
-                    chunk_callback(j, total_nodes)
+                    index.insert(doc)
                 except Exception:
-                    logger.exception("chunk_callback failed")
+                    logger.exception("Insert failed for a doc in index")
 
-        # periodic logging
+        # progress callback
+        if chunk_callback:
+            chunk_callback(min(i+batch_size, total_nodes), total_nodes)
+
+        if CANCEL_FLAG:
+            logger.warning("User cancelled during index build.")
+            break
+
+        # ログ
         if (i // batch_size) % 5 == 0 or (i + batch_size) >= total_nodes:
             logger.info("Indexed %d/%d nodes", min(i+batch_size, total_nodes), total_nodes)
 
@@ -310,8 +321,58 @@ def build_index_progressive(nodes: List[Document], embed_model, index_path: str,
         index.storage_context.persist(index_path)
 
     elapsed = time.time() - start_time
-    logger.info("===== Progressive Index Build Completed (%.2fs) =====", elapsed)
+    logger.info("===== 高速 Index Build Completed (%.2fs) =====", elapsed)
     return index
+#20251122 高速バッチ <<<<<<<<<<<<<
+#####################################################################
+
+#20251122 Export Text >>>>>>>>>>>>
+
+def _safe_filename_from_path(path: str) -> str:
+    """UTF-8 日本語を残して安全なファイル名に変換"""
+    base = pathlib.Path(path).name
+    # Windows で使えない文字だけ置換
+    safe = re.sub(r'[<>:"/\\|?*\n\r]+', "_", base)
+    # 長すぎる場合は切る
+    return safe[:200] if len(safe) > 200 else safe
+
+
+def write_extracted_texts(docs: List[Document], index_path: str) -> List[str]:
+    """
+    Write extracted texts of Documents to index_path/extracted_texts/*.txt.
+    Returns list of written file paths.
+    """
+    out_dir = os.path.join(index_path, "extracted_texts")
+    os.makedirs(out_dir, exist_ok=True)
+    written = []
+    counters = {}
+    for d in docs:
+        src = (d.extra_info or {}).get("file_path") if hasattr(d, "extra_info") else None
+        if not src:
+            # generate generic name
+            name = "doc"
+        else:
+            name = _safe_filename_from_path(src)
+
+        # ensure unique
+        cnt = counters.get(name, 0)
+        counters[name] = cnt + 1
+        if cnt:
+            fname = f"{name}__{cnt}.txt"
+        else:
+            fname = f"{name}.txt"
+
+        out_path = os.path.join(out_dir, fname)
+        try:
+            text = getattr(d, "text", None) or getattr(d, "content", "") or ""
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            written.append(out_path)
+        except Exception:
+            logger.exception("Failed to write extracted text for %s", src or "<unknown>")
+    logger.info("Wrote %d extracted text files to %s", len(written), out_dir)
+    return written
+#20251122 Export Text >>>>>>>>>>>>>>>>
 
 # ---------- Index build (high-level) ----------
 def build_index_from_folder(folder: str, index_name: str,
@@ -322,7 +383,8 @@ def build_index_from_folder(folder: str, index_name: str,
                             chunk_size: int = DEFAULT_SPLITTER_CHUNK_SIZE,
                             chunk_overlap: int = DEFAULT_SPLITTER_OVERLAP,
                             progress_callback: Optional[Callable] = None,
-                            chunk_callback: Optional[Callable] = None) -> dict:
+                            chunk_callback: Optional[Callable] = None,
+                            export_texts=False) -> dict:
     reset_cancel()
 
     if not os.path.isdir(folder):
@@ -343,6 +405,17 @@ def build_index_from_folder(folder: str, index_name: str,
         logger.warning("No documents loaded from folder %s", folder)
         return {"status": "error", "message": "no documents loaded", "file_logs": file_logs}
 
+    # optionally export extracted texts for inspection 
+    #20251122 export text>>>>>>>>>>>>>>>>
+    exported_files = []
+    if export_texts:
+        try:
+            exported_files = write_extracted_texts(docs, index_path)
+        except Exception:
+            logger.exception("Failed exporting extracted texts") 
+    #20251122 export text<<<<<<<<<<<<<<<<
+
+
     # 2) Split docs into nodes
     nodes = docs_to_nodes(docs, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     if CANCEL_FLAG:
@@ -357,6 +430,7 @@ def build_index_from_folder(folder: str, index_name: str,
                 len(nodes), embed_model_path, embed_device, embed_batch_size)
     try:
         index = build_index_progressive(nodes, embed_model, index_path, chunk_callback=chunk_callback)
+        
     except Exception as e:
         logger.exception("Index creation failed")
         return {"status": "error", "message": f"Index creation failed: {e}", "file_logs": file_logs}
@@ -377,6 +451,9 @@ def build_index_from_folder(folder: str, index_name: str,
 
 def list_ollama_models() -> List[str]:
     """Returns list of available Ollama model names (empty if ollama client not available)."""
+
+    OLLAMA_HOST_URL = 'http://127.0.0.1:11434' 
+
     try:
         import ollama
         models = []
@@ -392,7 +469,7 @@ def list_ollama_models() -> List[str]:
         except Exception:
             # fallback to client
             try:
-                client = ollama.Client()
+                client = ollama.Client(host=OLLAMA_HOST_URL, timeout=30.0) #Timeout when Ollama not found case
                 raw = client.list()
                 for m in getattr(raw, "models", []) or raw:
                     if isinstance(m, dict):
@@ -484,7 +561,7 @@ def query_index(index_name: str, query: str, storage_dir: str = "storage",
 
         # allow injection of an llm_instance (for testing) or create one
         if llm_instance is None:
-            llm_instance = Ollama(model=llm_model_name, base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
+            llm_instance = Ollama(model=llm_model_name, base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),request_timeout=120.0)
 
         qe = index.as_query_engine(llm=llm_instance)
         resp = qe.query(query)
