@@ -21,6 +21,9 @@
 - Index のメタ（`meta.json`）を保存し、一貫性チェックに用いる。
 - `request_timeout` は初回ロード考慮で十分大きく（例: 180s）。
 
+
+# 🚀 機能
+
 ### ■ インデックス化
 - 指定したフォルダーを再帰的に走査し全文を抽出 PDF, DOCX, XLSX, PPTX, CSV, TXT, MD, ZIP（解凍して再帰読み込み）
 - 進捗（ファイル読み込みフェーズ & インデックス生成フェーズ）を Streamlit 上で可視化
@@ -30,9 +33,13 @@
 - meta.json に埋め込みモデル情報を記録し、クエリ時にモデル不一致があればエラー
 ### ■ 検索
 - 作成済みインデックス一覧を選択式で表示
-- Ollama のモデル一覧を GUI 上で選択
 - 選んだモデルで LLM 生成（LLM を使わず Retriever のみモードも可能に拡張可）
 - 完全ローカルで動作（外部送信なし）
+- Streamlit UI でインデックス選択
+- Ollama モデル一覧を取得してプルダウン表示
+- LLM による自然文での回答生成
+- 完全ローカル検索
+
 ### ■ UI仕様（Streamlit）
 - 左: Embeddingモデルパス、Ollamaモデル、インデックス一覧
 - 「インデックス作成」タブ → フォルダー/インデックス名/パラメータ/キャンセルボタン
@@ -42,15 +49,29 @@
 - OS: WSL2 on Windows（他のLinuxでも同等）
 - Python 3.11+ 推奨
 
-## 📁 ディレクトリ構成
-rag_project/
-├─ app.py # UI
-├─ rag_core.py # Index作成、検索本体
-├─ requirements.txt # Python依存関係
-├─ .env # 環境変数
-├─ storage/ # 作成したIndexを格納
-└─ README.md
+##🧠 必要環境
+##1. Ollama（必須）
+https://ollama.ai
+ollama pull llama3.2:3b
+##2. HuggingFace 埋め込みモデル（ローカル）
 
+例:
+'''wsl
+mkdir -p local_models
+cd local_models
+git clone https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+'''
+##▶️ 実行
+streamlit run app.py
+
+## 📁 ディレクトリ構成
+local-rag/
+  ├── app.py
+  ├── rag_core.py
+  ├── requirements.txt
+  ├── README.md
+  └── local_models/
+       └── all-MiniLM-L6-v2/
 
 ## ⚙️ 環境変数 (.env)
 
@@ -103,44 +124,26 @@ POST /index/build - フォルダ指定でIndex作成
 POST /index/query - 作成済Indexに問い合わせ
 GET /health - ヘルスチェック
 
-## 📝 API使用例
-Index作成
-'''
-POST /index/build
-{
-  "folder_path": "data/docs",
-  "index_name": "TestFolder_index",
-  "provider": "ollama"
-}
-  ```
-'''
-Query
-POST /index/query
-{
-  "index_name": "TestFolder_index",
-  "query": "この文書の要点は？",
-  "use_llm_provider": "ollama"
-}
-  ```
+
 ## ⚠️ Troubleshooting & Tips
 
-1. Embedding / LLM のプロバイダ不一致
+###1. Embedding / LLM のプロバイダ不一致
 
 作成時とQuery時でプロバイダが異なるとエラー
 Index embedding <class 'llama_index.embeddings.openai.base.OpenAIEmbedding'> does not match requested provider ollama.
 対策: インデックス作成とQueryで同じプロバイダを使用。必要に応じて古いIndexを削除。
 
-2. Ollama LLM タイムアウト
+###2. Ollama LLM タイムアウト
 
 大きなモデルではQuery時にタイムアウト発生
 httpcore.ReadTimeout: timed out
 対策: request_timeout=180 など長めに設定。軽量モデルでIndex作成。
 
-3. Index作成時の古い残骸
+###3. Index作成時の古い残骸
 Indexフォルダに古いファイルが残っている場合、Embeddingが変わるとエラー
 対策: shutil.rmtree(index_path) で削除してから作成
 
-4. ファイル読み込みのエラー
+###4. ファイル読み込みのエラー
 .txt: OK
 .pdf: PyPDFがサポートしない場合あり
 ERROR:pypdf._cmap:Advanced encoding /90ms-RKSJ-V not implemented yet
@@ -149,22 +152,23 @@ pip install docx2txt
 
 読み込めないファイルは skipped_files に記録
 
-5. OpenAI API Key 認証エラー
+###5. OpenAI API Key 認証エラー
 .env に正しいキーを設定しないと認証エラー
 Incorrect API key provided
 
 対策: .env に OPENAI_API_KEY を設定。Gitに入れない。
-6. Index JSON / SQLite
+###6. Index JSON / SQLite
 Indexはローカル保存（JSON / StorageContext）でOK
 SQLite必須ではない
 _embed_model でEmbedding情報確認可能
 
-7. モデルサイズとローカル実行
+###7. モデルサイズとローカル実行
 
 Index作成は小さいモデルで十分（例：llama3.2:3b）
 Query時に大きいモデルで精度向上可能
-8. その他Tips
+###8. その他Tips
 
 .env と storage/ はGit管理しない
 複数フォルダ対応は safe_load_documents_from_folder の拡張で対応可能
 Query精度向上にはドメイン別Index、Embedモデル・LLMモデルの選択を適切に
+
