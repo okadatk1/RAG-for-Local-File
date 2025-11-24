@@ -61,6 +61,11 @@ mkdir -p local_models
 cd local_models
 git clone https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
 '''
+'''wsl
+git lfs install
+git clone https://huggingface.co/BAAI/bge-reranker-v2-m3
+'''
+
 ##▶️ 実行
 streamlit run app.py
 
@@ -108,11 +113,11 @@ tqdm
 
 ## 🚀 実行方法
 ### 環境構築
-'''
+'''wsl
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-  ```
+```
 ### API起動
 '''
 uvicorn main:app --reload
